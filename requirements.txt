@@ -1,0 +1,9 @@
+gigachat
+python-pptx
+Pillow
+requests
+urllib3
+flask
+waitress
+lxml
+httpx

@@ -19,7 +19,6 @@ from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template_string, request, send_file, jsonify
 
 import urllib3
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
@@ -29,7 +28,7 @@ try:
         TITLE_LAYOUT_INDEX,
         CONTENT_LAYOUT_INDEX,
         ADD_IMAGES,
-        SOFT_EDGE_RADIUS,
+        SOFT_EDGE_RADIUS
     )
 except ImportError:
     GIGACHAT_CREDENTIALS = os.environ.get("GIGACHAT_CREDENTIALS", "")
@@ -40,17 +39,17 @@ except ImportError:
     SOFT_EDGE_RADIUS = 10
 
 giga = GigaChat(
-    credentials=GIGACHAT_CREDENTIALS, scope="GIGACHAT_API_PERS", verify_ssl_certs=False
+    credentials=GIGACHAT_CREDENTIALS,
+    scope="GIGACHAT_API_PERS",
+    verify_ssl_certs=False
 )
 
-
-# ─── Вспомогательные функции (без изменений, кроме промта картинок) ─
+# ─── Вспомогательные функции (без изменений) ─────────────────────
 def safe_filename(text):
     forbidden_chars = r'<>:"/\|?*'
-    cleaned = "".join(c for c in text if c not in forbidden_chars)
-    cleaned = cleaned.strip().rstrip(".")
+    cleaned = ''.join(c for c in text if c not in forbidden_chars)
+    cleaned = cleaned.strip().rstrip('.')
     return cleaned if cleaned else "presentation"
-
 
 def clean_json_string(s):
     allowed_controls = {10, 13, 9}
@@ -61,23 +60,21 @@ def clean_json_string(s):
             if cp in allowed_controls:
                 cleaned.append(ch)
             else:
-                cleaned.append(" ")
-        elif unicodedata.category(ch).startswith("C"):
+                cleaned.append(' ')
+        elif unicodedata.category(ch).startswith('C'):
             continue
         else:
             cleaned.append(ch)
-    return "".join(cleaned).strip()
-
+    return ''.join(cleaned).strip()
 
 def extract_json_from_text(text):
-    start = text.find("{")
+    start = text.find('{')
     if start == -1:
         return text
-    end = text.rfind("}")
+    end = text.rfind('}')
     if end == -1:
         return text[start:]
-    return text[start : end + 1]
-
+    return text[start:end+1]
 
 def repair_json_structure(json_str):
     braces = 0
@@ -88,26 +85,25 @@ def repair_json_structure(json_str):
         if escape:
             escape = False
             continue
-        if ch == "\\":
+        if ch == '\\':
             escape = True
             continue
         if ch == '"':
             in_string = not in_string
         if in_string:
             continue
-        if ch == "{":
+        if ch == '{':
             braces += 1
-        elif ch == "}":
+        elif ch == '}':
             braces -= 1
-        elif ch == "[":
+        elif ch == '[':
             brackets += 1
-        elif ch == "]":
+        elif ch == ']':
             brackets -= 1
     repaired = json_str.rstrip()
-    repaired += "]" * max(0, brackets)
-    repaired += "}" * max(0, braces)
+    repaired += ']' * max(0, brackets)
+    repaired += '}' * max(0, braces)
     return repaired
-
 
 def parse_json_safe(text):
     json_str = extract_json_from_text(text)
@@ -134,7 +130,6 @@ def parse_json_safe(text):
         pass
     return None
 
-
 def normalize_title(title):
     if not title:
         return title
@@ -147,96 +142,79 @@ def normalize_title(title):
             new_words.append(word)
         else:
             new_words.append(word.lower())
-    return " ".join(new_words)
-
+    return ' '.join(new_words)
 
 def clean_subtitle(text):
     if not text:
         return ""
-    text = re.sub(r"^[#]+\s*", "", text)
-    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.*?)\*", r"\1", text)
-    text = re.sub(r"\n+", " ", text)
+    text = re.sub(r'^[#]+\s*', '', text)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'\n+', ' ', text)
     text = text.strip()
     if len(text) > 120:
-        text = text[:120].rsplit(" ", 1)[0] + "…"
+        text = text[:120].rsplit(' ', 1)[0] + '…'
     return text
-
 
 def delete_all_slides(prs):
     while len(prs.slides) > 0:
         rId = prs.slides._sldIdLst[0].get(
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
         )
         prs.part.drop_rel(rId)
         prs.slides._sldIdLst.remove(prs.slides._sldIdLst[0])
-
 
 def add_soft_edge(picture, radius_pt=10):
     radius_emu = int(radius_pt * 12700)
     soft_edge_xml = (
         f'<a:effectLst xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         f'<a:softEdge rad="{radius_emu}"/>'
-        f"</a:effectLst>"
+        f'</a:effectLst>'
     )
     pic_xml = picture._element
-    sp_pr = pic_xml.find(qn("p:spPr"))
+    sp_pr = pic_xml.find(qn('p:spPr'))
     if sp_pr is None:
-        sp_pr = pic_xml.makeelement(qn("p:spPr"), {})
+        sp_pr = pic_xml.makeelement(qn('p:spPr'), {})
         pic_xml.insert(0, sp_pr)
-    existing = sp_pr.find(qn("a:effectLst"))
+    existing = sp_pr.find(qn('a:effectLst'))
     if existing is not None:
         sp_pr.remove(existing)
     from lxml import etree
-
     effect_elem = etree.fromstring(soft_edge_xml)
     sp_pr.append(effect_elem)
-
 
 def get_cyrillic_font():
     font_paths = [
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/calibri.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Helvetica.ttc"
     ]
     for path in font_paths:
         if os.path.exists(path):
             return path
     return None
 
-
-# ─── Генерация картинок (исправленный промт) ────────────────────────
 def generate_image_via_text2image(prompt, access_token):
     url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
-    # Убираем упоминание мониторов и людей
     payload = {
         "model": "GigaChat",
-        "messages": [
-            {
-                "role": "user",
-                "content": (
-                    f"Создай реалистичное изображение на тему: {prompt}. "
-                    "Без текста, без надписей, без искажений и артефактов."
-                ),
-            }
-        ],
-        "function_call": "auto",
+        "messages": [{"role": "user", "content": (
+            f"Создай реалистичное изображение на тему: {prompt}. "
+            "Без текста, без надписей, без искажений и артефактов."
+        )}],
+        "function_call": "auto"
     }
     for attempt in range(3):
         try:
-            resp = requests.post(
-                url, headers=headers, json=payload, timeout=90, verify=False
-            )
+            resp = requests.post(url, headers=headers, json=payload, timeout=90, verify=False)
             if resp.status_code == 200:
                 data = resp.json()
-                content = (
-                    data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                )
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 match = re.search(r"""<img\s+src\s*=\s*["']([^"']+)["']""", content)
                 if match:
                     file_id = match.group(1)
@@ -249,14 +227,13 @@ def generate_image_via_text2image(prompt, access_token):
             else:
                 print(f"   text2image ответ {resp.status_code}: {resp.text[:100]}")
         except Exception as e:
-            print(f"   Ошибка text2image (попытка {attempt + 1}): {e}")
+            print(f"   Ошибка text2image (попытка {attempt+1}): {e}")
             if attempt < 2:
                 time.sleep(2)
     return None
 
-
 def create_error_placeholder_image(width=600, height=400):
-    img = Image.new("RGB", (width, height), color=(25, 50, 100))
+    img = Image.new('RGB', (width, height), color=(25, 50, 100))
     draw = ImageDraw.Draw(img)
     text = "К сожалению, изображение не удалось загрузить"
     font_path = get_cyrillic_font()
@@ -282,10 +259,9 @@ def create_error_placeholder_image(width=600, height=400):
         draw.text(((width - tw) // 2, y), line, fill=(255, 255, 255), font=font)
         y += 30
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format='PNG')
     buf.seek(0)
     return buf
-
 
 def get_image_for_slide(slide_title, slide_content, access_token):
     if not ADD_IMAGES:
@@ -300,18 +276,14 @@ def get_image_for_slide(slide_title, slide_content, access_token):
             return img
     return create_error_placeholder_image()
 
-
-# ─── Запросы к GigaChat ─────────────────────────────────────────
 def ask_giga(messages, max_tokens=1500, temperature=0.8):
     for attempt in range(1, 4):
         try:
-            resp = giga.chat(
-                {
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                }
-            )
+            resp = giga.chat({
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            })
             if resp and resp.choices:
                 return resp.choices[0].message.content
             else:
@@ -320,7 +292,6 @@ def ask_giga(messages, max_tokens=1500, temperature=0.8):
             print(f"⚠️ Попытка {attempt}: {e}")
             time.sleep(2)
     return None
-
 
 def generate_intro_text(prompt, slides_titles):
     titles_str = ", ".join(slides_titles)
@@ -332,24 +303,21 @@ def generate_intro_text(prompt, slides_titles):
     user_msg = f"Тема презентации: «{prompt}». Слайды: {titles_str}"
     for attempt in range(3):
         text = ask_giga(
-            [
-                {"role": "system", "content": sys_msg},
-                {"role": "user", "content": user_msg},
-            ],
+            [{"role":"system","content":sys_msg},
+             {"role":"user","content":user_msg}],
             max_tokens=200,
-            temperature=0.7,
+            temperature=0.7
         )
         if text and len(text.strip()) > 10:
             return text.strip()
         time.sleep(1)
     return f"По данным исследований, тема «{prompt}» затрагивает каждого второго жителя страны. Рассмотрим ключевые аспекты."
 
-
 def generate_conclusion_text(prompt, slides_info):
-    titles_str = ", ".join(s["title"] for s in slides_info)
+    titles_str = ", ".join(s['title'] for s in slides_info)
     key_points = []
     for s in slides_info:
-        for point in s.get("content", [])[:2]:
+        for point in s.get('content', [])[:2]:
             key_points.append(f"• {point}")
     points_str = "\n".join(key_points)
     sys_msg = (
@@ -361,20 +329,16 @@ def generate_conclusion_text(prompt, slides_info):
     user_msg = f"Тема презентации: «{prompt}».\nЗаголовки слайдов: {titles_str}\nКлючевые пункты:\n{points_str}"
     for attempt in range(3):
         text = ask_giga(
-            [
-                {"role": "system", "content": sys_msg},
-                {"role": "user", "content": user_msg},
-            ],
+            [{"role":"system","content":sys_msg},
+             {"role":"user","content":user_msg}],
             max_tokens=300,
-            temperature=0.7,
+            temperature=0.7
         )
         if text and len(text.strip()) > 20:
             return text.strip()
         time.sleep(1)
     return f"Таким образом, соблюдение рассмотренных рекомендаций позволит минимизировать риски и повысить безопасность. Берегите себя!"
 
-
-# ─── Генерация структуры ───────────────────────────────────────
 def generate_slide_structure(prompt, num_slides=5):
     dinstr = (
         "3–5 предложений с конкретными данными, цифрами, терминами. "
@@ -393,26 +357,24 @@ def generate_slide_structure(prompt, num_slides=5):
         "Никаких пояснений, только JSON."
     )
     ans1 = ask_giga(
-        [
-            {"role": "system", "content": sys1},
-            {"role": "user", "content": f"Тема: {prompt}"},
-        ],
-        max_tokens=500,
+        [{"role":"system","content":sys1},
+         {"role":"user","content":f"Тема: {prompt}"}],
+        max_tokens=500
     )
     if not ans1:
         return None
 
-    ans1 = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", ans1, flags=re.DOTALL)
+    ans1 = re.sub(r'```(?:json)?\s*(.*?)\s*```', r'\1', ans1, flags=re.DOTALL)
     ans1 = clean_json_string(ans1)
     data1 = parse_json_safe(ans1)
-    if not data1 or "slides" not in data1:
+    if not data1 or 'slides' not in data1:
         print("   Не удалось извлечь заголовки. Полный ответ (очищенный):", ans1[:300])
         return None
 
-    slides_headers = data1["slides"]
-    title_slide = data1.get("title_slide", {"title": prompt, "subtitle": ""})
+    slides_headers = data1['slides']
+    title_slide = data1.get('title_slide', {"title": prompt, "subtitle": ""})
 
-    raw_sub = title_slide.get("subtitle", "")
+    raw_sub = title_slide.get('subtitle', '')
     raw_sub = clean_subtitle(raw_sub)
     if raw_sub:
         raw_sub = normalize_title(raw_sub)
@@ -421,18 +383,14 @@ def generate_slide_structure(prompt, num_slides=5):
 
     if not raw_sub:
         sub = ask_giga(
-            [
-                {
-                    "role": "user",
-                    "content": (
-                        f"Придумай ОДНУ короткую фразу (до 10 слов) – подзаголовок для презентации на тему: «{prompt}». "
-                        "Подзаголовок должен раскрывать практическую пользу или главную идею: "
-                        "например, «Как защитить себя и близких», «Правила безопасного поведения», "
-                        "«Статистика и меры предосторожности». Только текст, без разметки."
-                    ),
-                }
-            ],
-            max_tokens=50,
+            [{"role":"user",
+              "content": (
+                  f"Придумай ОДНУ короткую фразу (до 10 слов) – подзаголовок для презентации на тему: «{prompt}». "
+                  "Подзаголовок должен раскрывать практическую пользу или главную идею: "
+                  "например, «Как защитить себя и близких», «Правила безопасного поведения», "
+                  "«Статистика и меры предосторожности». Только текст, без разметки."
+              )}],
+            max_tokens=50
         )
         if sub:
             raw_sub = sub.strip().strip('«»"')
@@ -442,12 +400,12 @@ def generate_slide_structure(prompt, num_slides=5):
     if not raw_sub:
         raw_sub = "Практические советы и анализ рисков"
 
-    title_slide["subtitle"] = raw_sub
+    title_slide['subtitle'] = raw_sub
 
     print(f"   Шаг 2/2: контент для {len(slides_headers)} слайдов...")
     full_slides = []
     for idx, info in enumerate(slides_headers, 1):
-        t = info.get("title", f"Слайд {idx}")
+        t = info.get('title', f'Слайд {idx}')
         print(f"      {idx}/{len(slides_headers)}: {t}")
         sys2 = (
             f"Тема: «{prompt}». Заголовок: «{t}». "
@@ -460,63 +418,46 @@ def generate_slide_structure(prompt, num_slides=5):
         content = None
         for attempt in range(3):
             ans2 = ask_giga(
-                [
-                    {"role": "system", "content": sys2},
-                    {"role": "user", "content": f"Контент для слайда: {t}"},
-                ],
+                [{"role":"system","content":sys2},
+                 {"role":"user","content":f"Контент для слайда: {t}"}],
                 max_tokens=800,
-                temperature=0.7,
+                temperature=0.7
             )
             if ans2:
-                print(f"         Ответ (попытка {attempt + 1}): {ans2[:100]}...")
+                print(f"         Ответ (попытка {attempt+1}): {ans2[:100]}...")
                 ans2 = clean_json_string(ans2)
                 data2 = parse_json_safe(ans2)
-                if (
-                    data2
-                    and isinstance(data2.get("content"), list)
-                    and len(data2["content"]) > 0
-                ):
-                    content = data2["content"]
+                if data2 and isinstance(data2.get('content'), list) and len(data2['content']) > 0:
+                    content = data2['content']
                     break
             else:
-                print(f"         Попытка {attempt + 1}: пустой ответ от API")
+                print(f"         Попытка {attempt+1}: пустой ответ от API")
             time.sleep(1)
 
         if content:
             full_slides.append({"title": t, "content": content})
         else:
-            full_slides.append(
-                {
-                    "title": t,
-                    "content": [
-                        f"Ключевые аспекты темы «{t}».",
-                        "Информация будет дополнена в финальной версии презентации.",
-                        "Рекомендации уточняются.",
-                    ],
-                }
-            )
+            full_slides.append({"title": t, "content": [
+                f"Ключевые аспекты темы «{t}».",
+                "Информация будет дополнена в финальной версии презентации.",
+                "Рекомендации уточняются."
+            ]})
 
     structure = {"title_slide": title_slide, "slides": full_slides}
-    structure["title_slide"]["title"] = normalize_title(
-        structure["title_slide"]["title"]
-    )
-    for s in structure["slides"]:
-        s["title"] = normalize_title(s["title"])
+    structure['title_slide']['title'] = normalize_title(structure['title_slide']['title'])
+    for s in structure['slides']:
+        s['title'] = normalize_title(s['title'])
 
-    slide_titles = [s["title"] for s in structure["slides"]]
+    slide_titles = [s['title'] for s in structure['slides']]
     intro_text = generate_intro_text(prompt, slide_titles)
-    structure["intro_text"] = intro_text
+    structure['intro_text'] = intro_text
 
-    conclusion_text = generate_conclusion_text(prompt, structure["slides"])
-    structure["conclusion_text"] = conclusion_text
+    conclusion_text = generate_conclusion_text(prompt, structure['slides'])
+    structure['conclusion_text'] = conclusion_text
 
     return structure
 
-
-# ─── Создание PPTX ──────────────────────────────────────────────
-def create_pptx_from_template(
-    structure, output_path, presenter_name="", presentation_date=None, access_token=None
-):
+def create_pptx_from_template(structure, output_path, presenter_name="", presentation_date=None, access_token=None):
     if not os.path.exists(TEMPLATE_PATH):
         print("Ошибка: шаблон не найден")
         return
@@ -530,7 +471,7 @@ def create_pptx_from_template(
     title_layout = prs.slide_layouts[TITLE_LAYOUT_INDEX]
     slide = prs.slides.add_slide(title_layout)
     ts = structure.get("title_slide", {})
-    ttext, stext = ts.get("title", ""), ts.get("subtitle", "")
+    ttext, stext = ts.get("title",""), ts.get("subtitle","")
     if len(ttext) > 70:
         tf, sf = Pt(24), Pt(14)
     else:
@@ -556,7 +497,7 @@ def create_pptx_from_template(
             shape.text = presentation_date
 
     # Вводный слайд
-    intro_text = structure.get("intro_text", "")
+    intro_text = structure.get('intro_text', '')
     content_layout = prs.slide_layouts[CONTENT_LAYOUT_INDEX]
     intro_slide = prs.slides.add_slide(content_layout)
     if intro_slide.shapes.title:
@@ -583,30 +524,21 @@ def create_pptx_from_template(
     p.alignment = PP_ALIGN.CENTER
     pPr = p._p.get_or_add_pPr()
     from lxml import etree
-
     for child in list(pPr):
-        if (
-            child.tag.endswith("}buChar")
-            or child.tag.endswith("}buAutoNum")
-            or child.tag.endswith("}buFont")
-            or child.tag.endswith("}buClr")
-            or child.tag.endswith("}buSz")
-            or child.tag.endswith("}buNone")
-        ):
+        if child.tag.endswith('}buChar') or child.tag.endswith('}buAutoNum') or \
+           child.tag.endswith('}buFont') or child.tag.endswith('}buClr') or \
+           child.tag.endswith('}buSz') or child.tag.endswith('}buNone'):
             pPr.remove(child)
-    etree.SubElement(pPr, qn("a:buNone"))
-    pPr.set("marL", "0")
-    pPr.set("indent", "0")
+    etree.SubElement(pPr, qn('a:buNone'))
+    pPr.set('marL', '0')
+    pPr.set('indent', '0')
 
     qr_size = Cm(5.5)
     qr_left = (prs.slide_width - qr_size) // 2
     qr_top = Inches(3.6)
     shape = intro_slide.shapes.add_shape(
         1,  # MSO_SHAPE.RECTANGLE
-        qr_left,
-        qr_top,
-        qr_size,
-        qr_size,
+        qr_left, qr_top, qr_size, qr_size
     )
     shape.fill.background()
     shape.line.color.rgb = RGBColor(0xFF, 0x8C, 0x00)
@@ -629,27 +561,19 @@ def create_pptx_from_template(
 
     for sd in structure.get("slides", []):
         slide = prs.slides.add_slide(content_layout)
-        slide_title = sd.get("title", "")
+        slide_title = sd.get("title","")
         slide_content = sd.get("content", [])
         if slide.shapes.title:
             slide.shapes.title.text = slide_title
 
         body_shape = None
         for shape in slide.placeholders:
-            if (
-                shape.placeholder_format.idx == 12
-                and shape.placeholder_format.type == 2
-            ):
-                body_shape = shape
-                break
+            if shape.placeholder_format.idx == 12 and shape.placeholder_format.type == 2:
+                body_shape = shape; break
         if body_shape is None:
             for shape in slide.placeholders:
-                if (
-                    shape.placeholder_format.type == 2
-                    and shape.placeholder_format.idx != 0
-                ):
-                    body_shape = shape
-                    break
+                if shape.placeholder_format.type == 2 and shape.placeholder_format.idx != 0:
+                    body_shape = shape; break
 
         if body_shape:
             body_shape.left = margin
@@ -685,9 +609,7 @@ def create_pptx_from_template(
 
                 left = Emu(half_width + margin)
                 top = Emu(top_margin)
-                picture = slide.shapes.add_picture(
-                    img_stream, left, top, width=img_width, height=img_height
-                )
+                picture = slide.shapes.add_picture(img_stream, left, top, width=img_width, height=img_height)
 
                 add_soft_edge(picture, SOFT_EDGE_RADIUS)
                 print("   ✓ изображение добавлено (с мягкими краями)")
@@ -695,7 +617,7 @@ def create_pptx_from_template(
                 print(f"   × ошибка вставки: {e}")
 
     # Заключительный слайд
-    conclusion_text = structure.get("conclusion_text", "")
+    conclusion_text = structure.get('conclusion_text', '')
     conclusion_slide = prs.slides.add_slide(content_layout)
     if conclusion_slide.shapes.title:
         conclusion_slide.shapes.title.text = "Заключение"
@@ -721,18 +643,13 @@ def create_pptx_from_template(
     p.alignment = PP_ALIGN.CENTER
     pPr = p._p.get_or_add_pPr()
     for child in list(pPr):
-        if (
-            child.tag.endswith("}buChar")
-            or child.tag.endswith("}buAutoNum")
-            or child.tag.endswith("}buFont")
-            or child.tag.endswith("}buClr")
-            or child.tag.endswith("}buSz")
-            or child.tag.endswith("}buNone")
-        ):
+        if child.tag.endswith('}buChar') or child.tag.endswith('}buAutoNum') or \
+           child.tag.endswith('}buFont') or child.tag.endswith('}buClr') or \
+           child.tag.endswith('}buSz') or child.tag.endswith('}buNone'):
             pPr.remove(child)
-    etree.SubElement(pPr, qn("a:buNone"))
-    pPr.set("marL", "0")
-    pPr.set("indent", "0")
+    etree.SubElement(pPr, qn('a:buNone'))
+    pPr.set('marL', '0')
+    pPr.set('indent', '0')
 
     static_line1 = (
         "Данная презентация сгенерирована искусственным интеллектом, "
@@ -740,18 +657,14 @@ def create_pptx_from_template(
         "разбавить обстановку серьёзной встречи, вспомнить, что ИИ нас, людей, не заменит, "
         "и тепло улыбнуться коллегам."
     )
-    static_line2_prefix = (
-        "По вопросам улучшения генерации и исправления ошибок обращайтесь к "
-    )
+    static_line2_prefix = "По вопросам улучшения генерации и исправления ошибок обращайтесь к "
     static_email = "Aleksander.Klimov@evraz.com"
 
     static_left = Inches(1.0)
     static_top = Inches(6.0)
     static_width = prs.slide_width - Inches(2.0)
     static_height = Inches(1.0)
-    textbox_static = conclusion_slide.shapes.add_textbox(
-        static_left, static_top, static_width, static_height
-    )
+    textbox_static = conclusion_slide.shapes.add_textbox(static_left, static_top, static_width, static_height)
     tf_static = textbox_static.text_frame
     tf_static.word_wrap = True
     tf_static.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
@@ -762,16 +675,11 @@ def create_pptx_from_template(
     p1.alignment = PP_ALIGN.CENTER
     pPr1 = p1._p.get_or_add_pPr()
     for child in list(pPr1):
-        if (
-            child.tag.endswith("}buChar")
-            or child.tag.endswith("}buAutoNum")
-            or child.tag.endswith("}buFont")
-            or child.tag.endswith("}buClr")
-            or child.tag.endswith("}buSz")
-            or child.tag.endswith("}buNone")
-        ):
+        if child.tag.endswith('}buChar') or child.tag.endswith('}buAutoNum') or \
+           child.tag.endswith('}buFont') or child.tag.endswith('}buClr') or \
+           child.tag.endswith('}buSz') or child.tag.endswith('}buNone'):
             pPr1.remove(child)
-    etree.SubElement(pPr1, qn("a:buNone"))
+    etree.SubElement(pPr1, qn('a:buNone'))
 
     p2 = tf_static.add_paragraph()
     p2.alignment = PP_ALIGN.CENTER
@@ -788,16 +696,11 @@ def create_pptx_from_template(
 
     pPr2 = p2._p.get_or_add_pPr()
     for child in list(pPr2):
-        if (
-            child.tag.endswith("}buChar")
-            or child.tag.endswith("}buAutoNum")
-            or child.tag.endswith("}buFont")
-            or child.tag.endswith("}buClr")
-            or child.tag.endswith("}buSz")
-            or child.tag.endswith("}buNone")
-        ):
+        if child.tag.endswith('}buChar') or child.tag.endswith('}buAutoNum') or \
+           child.tag.endswith('}buFont') or child.tag.endswith('}buClr') or \
+           child.tag.endswith('}buSz') or child.tag.endswith('}buNone'):
             pPr2.remove(child)
-    etree.SubElement(pPr2, qn("a:buNone"))
+    etree.SubElement(pPr2, qn('a:buNone'))
 
     # Нумерация слайдов
     slide_number = 2
@@ -823,11 +726,9 @@ def create_pptx_from_template(
     prs.save(output_path)
     print(f"✅ Презентация сохранена: {output_path}")
 
-
 # ─── Flask-приложение ─────────────────────────────────────────────
 app = Flask(__name__)
 
-# Новый HTML-шаблон в стиле ЕВРАЗ
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -839,7 +740,7 @@ HTML_TEMPLATE = """
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
-            background-color: #FF7A00; /* оранжевый фон ЕВРАЗ */
+            background: #ffffff; /* белый фон */
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -849,14 +750,14 @@ HTML_TEMPLATE = """
         .container {
             background: white;
             border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 0 0 2px #FF7A00, 0 8px 30px rgba(255,122,0,0.3); /* оранжевая рамка + тень */
             max-width: 500px;
             width: 100%;
             padding: 40px 30px;
             color: #333;
         }
         h1 {
-            color: #FF7A00;
+            color: #000000; /* чёрный заголовок */
             font-size: 28px;
             margin-bottom: 10px;
             text-align: center;
@@ -954,14 +855,14 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>📊 Генератор презентаций</h1>
-        <p class="subtitle">Создайте профессиональную презентацию с помощью GigaChat AI</p>
+        <h1>Генератор презентаций</h1>
+        <p class="subtitle">Создайте профессиональную 5‑тиминутку безопасности ЕВРАЗ</p>
         <form id="generateForm">
             <label for="theme">Тема презентации</label>
             <input type="text" id="theme" placeholder="Например: Безопасность на воде в летний период" required>
 
-            <label for="slides">Количество слайдов</label>
-            <input type="number" id="slides" value="5" min="1" max="15">
+            <label for="slides">Количество слайдов (макс. 5)</label>
+            <input type="number" id="slides" value="5" min="1" max="5">
 
             <label for="presenter">ФИО докладчика</label>
             <input type="text" id="presenter" placeholder="Иванов Иван Иванович">
@@ -1022,71 +923,64 @@ HTML_TEMPLATE = """
 </html>
 """
 
-
-@app.route("/")
+@app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-
-@app.route("/generate", methods=["POST"])
+@app.route('/generate', methods=['POST'])
 def generate():
-    theme = request.form.get("theme", "").strip()
+    theme = request.form.get('theme', '').strip()
     if not theme:
-        return jsonify({"error": "Тема не может быть пустой"}), 400
+        return jsonify({'error': 'Тема не может быть пустой'}), 400
 
     try:
-        num_slides = int(request.form.get("slides", "5"))
-        num_slides = max(1, min(15, num_slides))
+        num_slides = int(request.form.get('slides', '5'))
+        num_slides = max(1, min(5, num_slides))  # максимум 5
     except ValueError:
         num_slides = 5
 
-    presenter = request.form.get("presenter", "").strip()
+    presenter = request.form.get('presenter', '').strip()
 
     try:
         structure = generate_slide_structure(theme, num_slides)
         if not structure:
-            return jsonify({"error": "Не удалось создать структуру презентации"}), 500
+            return jsonify({'error': 'Не удалось создать структуру презентации'}), 500
 
-        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as tmp:
             temp_path = tmp.name
 
-        access_token = giga.token if hasattr(giga, "token") else None
-        create_pptx_from_template(
-            structure, temp_path, presenter_name=presenter, access_token=access_token
-        )
+        access_token = giga.token if hasattr(giga, 'token') else None
+        create_pptx_from_template(structure, temp_path, presenter_name=presenter, access_token=access_token)
 
-        with open(temp_path, "rb") as f:
+        with open(temp_path, 'rb') as f:
             pptx_data = f.read()
         os.unlink(temp_path)
 
         pptx_buffer = io.BytesIO(pptx_data)
         pptx_buffer.seek(0)
 
-        filename = safe_filename(theme) + ".pptx"
+        filename = safe_filename(theme) + '.pptx'
         return send_file(
             pptx_buffer,
-            mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
             as_attachment=True,
-            download_name=filename,
+            download_name=filename
         )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     import os
     import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "--cloud":
+    if len(sys.argv) > 1 and sys.argv[1] == '--cloud':
         import waitress
-
         port = int(os.environ.get("PORT", 8080))
         print(f"Запуск production сервера на порту {port}")
-        waitress.serve(app, host="0.0.0.0", port=port)
+        waitress.serve(app, host='0.0.0.0', port=port)
     else:
         print("=" * 60)
         print("🚀 Сервер генератора презентаций запущен")
         print(f"📂 Шаблон презентации: {TEMPLATE_PATH}")
         print("🌐 Откройте в браузере: http://localhost:5000")
         print("=" * 60)
-        app.run(debug=False, host="0.0.0.0", port=5000)
+        app.run(debug=False, host='0.0.0.0', port=5000)

@@ -5,7 +5,6 @@ import time
 import io
 import ast
 import unicodedata
-import waitress
 from datetime import date
 import tempfile
 import httpx
@@ -23,7 +22,6 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Импорт конфигурации (если config.py рядом)
 try:
     from config import (
         GIGACHAT_CREDENTIALS,
@@ -34,8 +32,7 @@ try:
         SOFT_EDGE_RADIUS,
     )
 except ImportError:
-    # Для теста можно задать вручную, но лучше создать config.py
-    GIGACHAT_CREDENTIALS = "ваш_ключ"
+    GIGACHAT_CREDENTIALS = os.environ.get("GIGACHAT_CREDENTIALS", "")
     TEMPLATE_PATH = "company_template.pptx"
     TITLE_LAYOUT_INDEX = 0
     CONTENT_LAYOUT_INDEX = 13
@@ -47,7 +44,7 @@ giga = GigaChat(
 )
 
 
-# ─── Вспомогательные функции ─────────────────────────────────────
+# ─── Вспомогательные функции (без изменений, кроме промта картинок) ─
 def safe_filename(text):
     forbidden_chars = r'<>:"/\|?*'
     cleaned = "".join(c for c in text if c not in forbidden_chars)
@@ -209,12 +206,14 @@ def get_cyrillic_font():
     return None
 
 
+# ─── Генерация картинок (исправленный промт) ────────────────────────
 def generate_image_via_text2image(prompt, access_token):
     url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
+    # Убираем упоминание мониторов и людей
     payload = {
         "model": "GigaChat",
         "messages": [
@@ -222,9 +221,7 @@ def generate_image_via_text2image(prompt, access_token):
                 "role": "user",
                 "content": (
                     f"Создай реалистичное изображение на тему: {prompt}. "
-                    "Без текста, без надписей, без искажений и артефактов. "
-                    "Реалистичное расположение объектов: люди смотрят на мониторы, "
-                    "мониторы повёрнуты экранами к людям."
+                    "Без текста, без надписей, без искажений и артефактов."
                 ),
             }
         ],
@@ -304,6 +301,7 @@ def get_image_for_slide(slide_title, slide_content, access_token):
     return create_error_placeholder_image()
 
 
+# ─── Запросы к GigaChat ─────────────────────────────────────────
 def ask_giga(messages, max_tokens=1500, temperature=0.8):
     for attempt in range(1, 4):
         try:
@@ -376,6 +374,7 @@ def generate_conclusion_text(prompt, slides_info):
     return f"Таким образом, соблюдение рассмотренных рекомендаций позволит минимизировать риски и повысить безопасность. Берегите себя!"
 
 
+# ─── Генерация структуры ───────────────────────────────────────
 def generate_slide_structure(prompt, num_slides=5):
     dinstr = (
         "3–5 предложений с конкретными данными, цифрами, терминами. "
@@ -514,6 +513,7 @@ def generate_slide_structure(prompt, num_slides=5):
     return structure
 
 
+# ─── Создание PPTX ──────────────────────────────────────────────
 def create_pptx_from_template(
     structure, output_path, presenter_name="", presentation_date=None, access_token=None
 ):
@@ -827,18 +827,19 @@ def create_pptx_from_template(
 # ─── Flask-приложение ─────────────────────────────────────────────
 app = Flask(__name__)
 
+# Новый HTML-шаблон в стиле ЕВРАЗ
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Генератор презентаций</title>
+    <title>Генератор презентаций ЕВРАЗ</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #1a3c6e 0%, #2a5f8f 100%);
+            background-color: #FF7A00; /* оранжевый фон ЕВРАЗ */
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -852,12 +853,14 @@ HTML_TEMPLATE = """
             max-width: 500px;
             width: 100%;
             padding: 40px 30px;
+            color: #333;
         }
         h1 {
-            color: #1a3c6e;
-            font-size: 24px;
+            color: #FF7A00;
+            font-size: 28px;
             margin-bottom: 10px;
             text-align: center;
+            font-weight: 700;
         }
         p.subtitle {
             color: #666;
@@ -886,12 +889,12 @@ HTML_TEMPLATE = """
         }
         input:focus {
             outline: none;
-            border-color: #1a3c6e;
+            border-color: #FF7A00;
         }
         button {
             width: 100%;
             padding: 14px;
-            background: #1a3c6e;
+            background: #FF7A00;
             color: white;
             border: none;
             border-radius: 8px;
@@ -901,7 +904,7 @@ HTML_TEMPLATE = """
             transition: background 0.3s, transform 0.2s;
         }
         button:hover {
-            background: #0f2b4f;
+            background: #e06d00;
             transform: translateY(-1px);
         }
         button:active {
@@ -912,12 +915,12 @@ HTML_TEMPLATE = """
             text-align: center;
             margin-top: 30px;
             padding: 20px;
-            background: #f8f9fa;
+            background: #fff5e6;
             border-radius: 12px;
         }
         .spinner {
             border: 4px solid #e0e0e0;
-            border-top: 4px solid #1a3c6e;
+            border-top: 4px solid #FF7A00;
             border-radius: 50%;
             width: 48px;
             height: 48px;
@@ -929,23 +932,23 @@ HTML_TEMPLATE = """
             100% { transform: rotate(360deg); }
         }
         #message {
-            color: #555;
+            color: #333;
             font-size: 15px;
             margin-bottom: 12px;
         }
         #downloadLink {
             display: none;
-            color: #1a3c6e;
+            color: #FF7A00;
             font-weight: 600;
             text-decoration: none;
             font-size: 16px;
             padding: 10px 20px;
-            background: #e8f0fe;
+            background: #fff5e6;
             border-radius: 8px;
             transition: background 0.3s;
         }
         #downloadLink:hover {
-            background: #d0e2ff;
+            background: #ffe0cc;
         }
     </style>
 </head>
@@ -1040,25 +1043,21 @@ def generate():
     presenter = request.form.get("presenter", "").strip()
 
     try:
-        # Генерация структуры
         structure = generate_slide_structure(theme, num_slides)
         if not structure:
             return jsonify({"error": "Не удалось создать структуру презентации"}), 500
 
-        # Создаём временный файл
         with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as tmp:
             temp_path = tmp.name
 
-        # Генерируем презентацию
         access_token = giga.token if hasattr(giga, "token") else None
         create_pptx_from_template(
             structure, temp_path, presenter_name=presenter, access_token=access_token
         )
 
-        # Читаем файл в память и отправляем
         with open(temp_path, "rb") as f:
             pptx_data = f.read()
-        os.unlink(temp_path)  # удаляем временный файл
+        os.unlink(temp_path)
 
         pptx_buffer = io.BytesIO(pptx_data)
         pptx_buffer.seek(0)
@@ -1075,11 +1074,12 @@ def generate():
 
 
 if __name__ == "__main__":
-    # Локальный запуск: python app.py
+    import os
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "--cloud":
-        # Запуск через waitress на Render
+        import waitress
+
         port = int(os.environ.get("PORT", 8080))
         print(f"Запуск production сервера на порту {port}")
         waitress.serve(app, host="0.0.0.0", port=port)
